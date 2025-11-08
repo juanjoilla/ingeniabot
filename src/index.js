@@ -26,10 +26,14 @@ const {
 } = require("./config/constants");
 const databaseService = require("./services/databaseService");
 const aiService = require("./services/aiService");
+const recordatorioService = require('./services/recordatorioService');
+
 
 // Importar handlers
 const { handleCursos } = require("./handlers/cursosHandler");
 const { handlePagos } = require("./handlers/pagosHandler");
+const agendaHandler = require('./handlers/agendaHandler');
+
 const {
   handleBienestar,
   handleSoporte,
@@ -103,11 +107,13 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
         return await handleCursos(estudianteId, estudiante);
       case 2:
         return await handlePagos(estudianteId);
-      case 3:
-        return handleBienestar();
+      case 3: 
+      return await agendaHandler.handleVerAgenda(estudianteId);
       case 4:
-        return handleSoporte();
+        return handleBienestar();
       case 5:
+        return handleSoporte();
+      case 6:
         return handleAdmision();
       default:
         // Mensaje de error mejorado para opciones no válidas
@@ -157,6 +163,21 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
       textoNormalizado.includes('admisión') || 
       textoNormalizado.includes('postular')) {
     return handleAdmision();
+  }
+
+    // Comandos de agenda
+  if (textoNormalizado === 'agenda' || textoNormalizado === 'mi agenda') {
+    return await agendaHandler.handleVerAgenda(estudianteId);
+  }
+  
+  if (textoNormalizado === 'agendar' || textoNormalizado === 'nueva cita') {
+    return await agendaHandler.handleAgendarInicio();
+  }
+  
+  // Cancelar cita
+  if (textoNormalizado.startsWith('cancelar cita ')) {
+    const numero = parseInt(textoNormalizado.split(' ')[2]);
+    return await agendaHandler.handleCancelarCita(estudianteId, numero);
   }
 
   // ==================== PREGUNTA LIBRE -> IA ====================
@@ -230,6 +251,7 @@ async function connectToWhatsApp() {
     } else if (connection === "open") {
       console.log("✅ Bot conectado a WhatsApp exitosamente");
       console.log("📱 Esperando mensajes...\n");
+      recordatorioService.iniciar(sock);
 
       try {
         const stats = await databaseService.getEstadisticas();

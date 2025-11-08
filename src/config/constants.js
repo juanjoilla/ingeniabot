@@ -6,9 +6,10 @@ const MENU_PRINCIPAL = `*🤖 IngeniaBot - Universidad 2025*
 
 📚 *1* - Mis cursos
 💳 *2* - Mis pagos
-🏥 *3* - Bienestar estudiantil
-🔧 *4* - Soporte técnico
-🎓 *5* - Admisión 2025
+📅 *3* - Mi agenda
+🏥 *4* - Bienestar estudiantil
+🔧 *5* - Soporte técnico
+🎓 *6* - Admisión 2025
 
 💬 *También puedes hacer preguntas libres*
 Escribe tu duda y te responderé con IA
@@ -38,9 +39,10 @@ const COMANDOS = {
   MENU: ['menu', 'menú', 'inicio', 'hola', 'hi', 'hey'],
   CURSOS: ['1', 'cursos', 'mis cursos', 'curso'],
   PAGOS: ['2', 'pagos', 'mis pagos', 'pago', 'pension', 'pensión'],
-  BIENESTAR: ['3', 'bienestar', 'salud'],
-  SOPORTE: ['4', 'soporte', 'ayuda técnica', 'problema'],
-  ADMISION: ['5', 'admision', 'admisión', 'postular']
+  AGENDA: ['3', 'agenda', 'mi agenda', 'citas', 'recordatorios'],
+  BIENESTAR: ['4', 'bienestar', 'salud'],
+  SOPORTE: ['5', 'soporte', 'ayuda técnica', 'problema'],
+  ADMISION: ['6', 'admision', 'admisión', 'postular']
 };
 
 const CONFIGURACION_IA = {
