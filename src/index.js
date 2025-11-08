@@ -1,7 +1,7 @@
 // src/index.js - IngeniaBot Main Entry Point
 require("dotenv").config();
 const qrcode = require("qrcode-terminal");
-const http = require("http"); // Necesitas importar el módulo HTTP
+const http = require("http");
 
 // Debug: Verificar variables de entorno
 console.log("🔍 DATABASE_URL existe:", !!process.env.DATABASE_URL);
@@ -88,57 +88,78 @@ async function verificarConfiguracion() {
 async function procesarMensaje(mensaje, estudianteId, estudiante) {
   const textoNormalizado = mensaje.toLowerCase().trim();
 
-  // Comandos de menú
+  // Comandos de menú (exactos)
   if (COMANDOS.MENU.some((cmd) => textoNormalizado === cmd)) {
     return MENU_PRINCIPAL;
   }
 
-  // Comandos de cursos
-  if (
-    COMANDOS.CURSOS.some(
-      (cmd) => textoNormalizado === cmd || textoNormalizado.includes(cmd)
-    )
-  ) {
+  // ==================== VALIDACIÓN ESTRICTA DE NÚMEROS ====================
+  // Verifica si el mensaje es SOLO un número (ej: "1", "10", "100")
+  if (/^\d+$/.test(textoNormalizado)) {
+    const numero = parseInt(textoNormalizado);
+    
+    switch(numero) {
+      case 1:
+        return await handleCursos(estudianteId, estudiante);
+      case 2:
+        return await handlePagos(estudianteId);
+      case 3:
+        return handleBienestar();
+      case 4:
+        return handleSoporte();
+      case 5:
+        return handleAdmision();
+      default:
+        // Mensaje de error mejorado para opciones no válidas
+        return `❌ *Opción "${numero}" no válida*\n\n` +
+               `Las opciones disponibles son:\n\n` +
+               `📚 *1* - Mis cursos\n` +
+               `💳 *2* - Mis pagos\n` +
+               `🏥 *3* - Bienestar estudiantil\n` +
+               `🔧 *4* - Soporte técnico\n` +
+               `🎓 *5* - Admisión\n\n` +
+               `_O escribe tu pregunta y te responderé con IA_ 🤖`;
+    }
+  }
+
+  // ==================== BÚSQUEDA POR PALABRAS CLAVE ====================
+  // Solo entra aquí si NO es un número puro
+  
+  // Comandos de cursos (palabras clave)
+  if (textoNormalizado.includes('curso') || textoNormalizado.includes('materia')) {
     return await handleCursos(estudianteId, estudiante);
   }
 
-  // Comandos de pagos
-  if (
-    COMANDOS.PAGOS.some(
-      (cmd) => textoNormalizado === cmd || textoNormalizado.includes(cmd)
-    )
-  ) {
+  // Comandos de pagos (palabras clave)
+  if (textoNormalizado.includes('pago') || 
+      textoNormalizado.includes('pension') || 
+      textoNormalizado.includes('pensión') || 
+      textoNormalizado.includes('deuda')) {
     return await handlePagos(estudianteId);
   }
 
-  // Comandos de bienestar
-  if (
-    COMANDOS.BIENESTAR.some(
-      (cmd) => textoNormalizado === cmd || textoNormalizado.includes(cmd)
-    )
-  ) {
+  // Comandos de bienestar (palabras clave)
+  if (textoNormalizado.includes('bienestar') || 
+      textoNormalizado.includes('salud') || 
+      textoNormalizado.includes('psicolog')) {
     return handleBienestar();
   }
 
-  // Comandos de soporte
-  if (
-    COMANDOS.SOPORTE.some(
-      (cmd) => textoNormalizado === cmd || textoNormalizado.includes(cmd)
-    )
-  ) {
+  // Comandos de soporte (palabras clave)
+  if (textoNormalizado.includes('soporte') || 
+      textoNormalizado.includes('ayuda técnica') || 
+      textoNormalizado.includes('problema')) {
     return handleSoporte();
   }
 
-  // Comandos de admisión
-  if (
-    COMANDOS.ADMISION.some(
-      (cmd) => textoNormalizado === cmd || textoNormalizado.includes(cmd)
-    )
-  ) {
+  // Comandos de admisión (palabras clave)
+  if (textoNormalizado.includes('admision') || 
+      textoNormalizado.includes('admisión') || 
+      textoNormalizado.includes('postular')) {
     return handleAdmision();
   }
 
-  // Pregunta libre -> IA
+  // ==================== PREGUNTA LIBRE -> IA ====================
   logger.info(`Procesando pregunta con IA: ${mensaje.substring(0, 50)}...`);
 
   // Obtener contexto del estudiante
@@ -228,7 +249,7 @@ async function connectToWhatsApp() {
     }
   });
 
-  // Manejo de mensajes (sin cambios)
+  // Manejo de mensajes
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe || msg.key.remoteJid.includes("@g.us"))
@@ -317,9 +338,7 @@ async function main() {
     console.error("\nStack trace:", error.stack);
     process.exit(1);
   }
-}
-
-// Manejo de errores no capturados
+} 
 process.on("unhandledRejection", (error) => {
   logger.error("❌ Unhandled Rejection:", error);
 });
@@ -328,8 +347,7 @@ process.on("uncaughtException", (error) => {
   logger.error("❌ Uncaught Exception:", error);
   process.exit(1);
 });
-
-// Manejo de señales de terminación
+  
 process.on("SIGINT", () => {
   console.log("\n\n👋 Cerrando IngeniaBot...");
   process.exit(0);
@@ -339,6 +357,5 @@ process.on("SIGTERM", () => {
   console.log("\n\n👋 Cerrando IngeniaBot...");
   process.exit(0);
 });
-
-// Iniciar aplicación
-main();
+ 
+main(); 

@@ -4,7 +4,7 @@
 -- ==================== ESTUDIANTES DE EJEMPLO ====================
 
 INSERT INTO estudiantes (telefono, nombre, codigo_estudiante, correo, carrera, semestre) VALUES
-('51999888777', 'Juan Pérez García', 'EST2024001', 'juan.perez@universidad.edu.pe', 'Ingeniería de Sistemas', 5),
+('51987581179', 'Juan Jose Illatopa', 'EST2024001', 'juan.perez@universidad.edu.pe', 'Ingeniería de Sistemas', 5),
 ('51988777666', 'María González López', 'EST2024002', 'maria.gonzalez@universidad.edu.pe', 'Administración de Empresas', 3),
 ('51977666555', 'Carlos Ramírez Silva', 'EST2024003', 'carlos.ramirez@universidad.edu.pe', 'Arquitectura', 7)
 ON CONFLICT (telefono) DO NOTHING;
