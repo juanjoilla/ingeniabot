@@ -8,7 +8,19 @@ class AgendaHandler {
   async handleVerAgenda(estudianteId) {
     try {
       const result = await pool.query(
-        `SELECT * FROM obtener_proximas_citas($1, 7)`,
+        `SELECT 
+          id, 
+          tipo, 
+          titulo, 
+          fecha_hora, 
+          ubicacion, 
+          estado
+         FROM agenda
+         WHERE estudiante_id = $1
+         AND fecha_hora > NOW()
+         AND fecha_hora < NOW() + INTERVAL '7 days'
+         AND estado IN ('pendiente', 'confirmado')
+         ORDER BY fecha_hora ASC`,
         [estudianteId]
       );
       
@@ -36,7 +48,7 @@ class AgendaHandler {
         });
 
         const icono = this.getIconoPorTipo(item.tipo);
-        const tiempoRestante = this.formatearTiempoRestante(item.tiempo_restante);
+        const tiempoRestante = this.formatearTiempoRestante(item.fecha_hora);
 
         mensaje += `${index + 1}. ${icono} *${item.titulo}*\n`;
         mensaje += `   📆 ${fechaFormato} - ${horaFormato}\n`;
@@ -69,100 +81,6 @@ class AgendaHandler {
            `4️⃣ Recordatorio personal\n` +
            `5️⃣ Otro\n\n` +
            `Escribe el número de tu elección 👇`;
-  }
-
-  // Proceso de agendamiento interactivo
-  async procesarAgendamiento(mensaje, estudianteId, paso = 1, datosTemporales = {}) {
-    // Este método maneja el flujo de conversación para agendar
-    // En la práctica, necesitarías mantener el estado en la BD o en memoria
-    
-    switch(paso) {
-      case 1: // Tipo seleccionado
-        const tipos = ['cita', 'asesoria', 'tutoria', 'recordatorio', 'otro'];
-        const tipoIndex = parseInt(mensaje) - 1;
-        
-        if (tipoIndex >= 0 && tipoIndex < tipos.length) {
-          datosTemporales.tipo = tipos[tipoIndex];
-          return {
-            respuesta: `✅ Tipo: *${tipos[tipoIndex]}*\n\n` +
-                      `Ahora, ¿cuál es el motivo o título?\n\n` +
-                      `Ejemplo: "Consulta con psicólogo" o "Tutoría de Matemáticas"`,
-            siguientePaso: 2,
-            datos: datosTemporales
-          };
-        }
-        return {
-          respuesta: `❌ Opción no válida. Por favor elige del 1 al 5.`,
-          siguientePaso: 1,
-          datos: datosTemporales
-        };
-
-      case 2: // Título recibido
-        datosTemporales.titulo = mensaje;
-        return {
-          respuesta: `✅ Título: "${mensaje}"\n\n` +
-                    `¿Para qué fecha y hora?\n\n` +
-                    `Formato: DD/MM/YYYY HH:MM\n` +
-                    `Ejemplo: 15/11/2024 14:30`,
-          siguientePaso: 3,
-          datos: datosTemporales
-        };
-
-      case 3: // Fecha y hora
-        const fecha = this.parsearFechaHora(mensaje);
-        if (!fecha) {
-          return {
-            respuesta: `❌ Formato de fecha incorrecto.\n\n` +
-                      `Por favor usa: DD/MM/YYYY HH:MM\n` +
-                      `Ejemplo: 15/11/2024 14:30`,
-            siguientePaso: 3,
-            datos: datosTemporales
-          };
-        }
-
-        datosTemporales.fecha_hora = fecha;
-        return {
-          respuesta: `✅ Fecha: ${fecha.toLocaleString('es-PE')}\n\n` +
-                    `¿Dónde será? (ubicación)\n\n` +
-                    `Ejemplo: "Lab 302" o "Centro Médico" o escribe "ninguna"`,
-          siguientePaso: 4,
-          datos: datosTemporales
-        };
-
-      case 4: // Ubicación
-        datosTemporales.ubicacion = mensaje.toLowerCase() === 'ninguna' ? null : mensaje;
-        
-        // Guardar en BD
-        await this.guardarCita(estudianteId, datosTemporales);
-        
-        const fechaFinal = new Date(datosTemporales.fecha_hora);
-        return {
-          respuesta: `✅ *Cita agendada exitosamente!*\n\n` +
-                    `📝 ${datosTemporales.titulo}\n` +
-                    `📆 ${fechaFinal.toLocaleDateString('es-PE')}\n` +
-                    `🕐 ${fechaFinal.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}\n` +
-                    `📍 ${datosTemporales.ubicacion || 'Sin ubicación'}\n\n` +
-                    `🔔 Te recordaré 1 hora antes.\n\n` +
-                    `Escribe *"agenda"* para ver todas tus citas.`,
-          siguientePaso: 'completado',
-          datos: {}
-        };
-    }
-  }
-
-  // Guardar cita en BD
-  async guardarCita(estudianteId, datos) {
-    try {
-      await pool.query(
-        `INSERT INTO agenda (estudiante_id, tipo, titulo, fecha_hora, ubicacion, minutos_antes_recordatorio)
-         VALUES ($1, $2, $3, $4, $5, 60)`,
-        [estudianteId, datos.tipo, datos.titulo, datos.fecha_hora, datos.ubicacion]
-      );
-      console.log(`✅ Cita guardada para estudiante ${estudianteId}`);
-    } catch (error) {
-      console.error('Error al guardar cita:', error);
-      throw error;
-    }
   }
 
   // Cancelar cita
@@ -214,28 +132,30 @@ class AgendaHandler {
     return iconos[tipo] || '📅';
   }
 
-  formatearTiempoRestante(interval) {
-    // PostgreSQL devuelve interval como string
-    // Parsearlo y formatear
-    const match = interval.match(/(\d+) days?|(\d+):(\d+):(\d+)/);
-    if (!match) return 'Próximamente';
+  formatearTiempoRestante(fechaHora) {
+    // Calcular diferencia de tiempo directamente
+    const ahora = new Date();
+    const fecha = new Date(fechaHora);
+    const diferenciaMilisegundos = fecha - ahora;
 
-    if (match[1]) {
-      const dias = parseInt(match[1]);
-      return `En ${dias} día${dias > 1 ? 's' : ''}`;
+    if (diferenciaMilisegundos < 0) {
+      return 'Ya pasó';
     }
 
-    const horas = parseInt(match[2] || 0);
-    const minutos = parseInt(match[3] || 0);
+    const minutos = Math.floor(diferenciaMilisegundos / (1000 * 60));
+    const horas = Math.floor(minutos / 60);
+    const dias = Math.floor(horas / 24);
 
-    if (horas > 24) {
-      const dias = Math.floor(horas / 24);
+    if (dias > 0) {
       return `En ${dias} día${dias > 1 ? 's' : ''}`;
     }
     if (horas > 0) {
       return `En ${horas} hora${horas > 1 ? 's' : ''}`;
     }
-    return `En ${minutos} minutos`;
+    if (minutos > 0) {
+      return `En ${minutos} minuto${minutos > 1 ? 's' : ''}`;
+    }
+    return 'Ahora mismo';
   }
 
   parsearFechaHora(texto) {
