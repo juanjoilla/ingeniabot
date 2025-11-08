@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ingeniabot
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+    disk:
+      name: auth_info
+      mountPath: /app/auth_info
+      sizeGB: 1

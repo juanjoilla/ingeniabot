@@ -1,0 +1,36 @@
+{
+  "name": "ingeniabot",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp inteligente para gestión universitaria con IA",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "universidad",
+    "gemini",
+    "ai"
+  ],
+  "author": "Tu Nombre",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.6",
+    "dotenv": "^16.4.5",
+    "pg": "^8.13.0",
+    "pino": "^8.21.0",
+    "pino-pretty": "^10.3.1",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
