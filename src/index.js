@@ -26,16 +26,19 @@ const {
 } = require("./config/constants");
 const databaseService = require("./services/databaseService");
 const aiService = require("./services/aiService");
+const recordatorioService = require('./services/recordatorioService');
+
 
 // Importar handlers
 const { handleCursos } = require("./handlers/cursosHandler");
 const { handlePagos } = require("./handlers/pagosHandler");
+const agendaHandler = require('./handlers/agendaHandler');
+
 const {
   handleBienestar,
   handleSoporte,
   handleAdmision,
 } = require("./handlers/menuHandler");
-const agendaHandler = require("./handlers/agendaHandler");
 
 // Logger configuración
 const logger = pino({
@@ -104,8 +107,8 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
         return await handleCursos(estudianteId, estudiante);
       case 2:
         return await handlePagos(estudianteId);
-      case 3:
-        return await agendaHandler.handleVerAgenda(estudianteId);
+      case 3: 
+      return await agendaHandler.handleVerAgenda(estudianteId);
       case 4:
         return handleBienestar();
       case 5:
@@ -118,10 +121,9 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
                `Las opciones disponibles son:\n\n` +
                `📚 *1* - Mis cursos\n` +
                `💳 *2* - Mis pagos\n` +
-               `📅 *3* - Mi agenda\n` +
-               `🏥 *4* - Bienestar estudiantil\n` +
-               `🔧 *5* - Soporte técnico\n` +
-               `🎓 *6* - Admisión\n\n` +
+               `🏥 *3* - Bienestar estudiantil\n` +
+               `🔧 *4* - Soporte técnico\n` +
+               `🎓 *5* - Admisión\n\n` +
                `_O escribe tu pregunta y te responderé con IA_ 🤖`;
     }
   }
@@ -140,23 +142,6 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
       textoNormalizado.includes('pensión') || 
       textoNormalizado.includes('deuda')) {
     return await handlePagos(estudianteId);
-  }
-
-  // Comandos de agenda (palabras clave)
-  if (textoNormalizado === 'agenda' || textoNormalizado === 'mi agenda') {
-    return await agendaHandler.handleVerAgenda(estudianteId);
-  }
-  
-  if (textoNormalizado === 'agendar' || textoNormalizado === 'nueva cita') {
-    return await agendaHandler.handleAgendarInicio();
-  }
-  
-  // Cancelar cita
-  if (textoNormalizado.startsWith('cancelar cita ')) {
-    const numero = parseInt(textoNormalizado.split(' ')[2]);
-    if (!isNaN(numero)) {
-      return await agendaHandler.handleCancelarCita(estudianteId, numero);
-    }
   }
 
   // Comandos de bienestar (palabras clave)
@@ -178,6 +163,21 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
       textoNormalizado.includes('admisión') || 
       textoNormalizado.includes('postular')) {
     return handleAdmision();
+  }
+
+    // Comandos de agenda
+  if (textoNormalizado === 'agenda' || textoNormalizado === 'mi agenda') {
+    return await agendaHandler.handleVerAgenda(estudianteId);
+  }
+  
+  if (textoNormalizado === 'agendar' || textoNormalizado === 'nueva cita') {
+    return await agendaHandler.handleAgendarInicio();
+  }
+  
+  // Cancelar cita
+  if (textoNormalizado.startsWith('cancelar cita ')) {
+    const numero = parseInt(textoNormalizado.split(' ')[2]);
+    return await agendaHandler.handleCancelarCita(estudianteId, numero);
   }
 
   // ==================== PREGUNTA LIBRE -> IA ====================
@@ -251,6 +251,7 @@ async function connectToWhatsApp() {
     } else if (connection === "open") {
       console.log("✅ Bot conectado a WhatsApp exitosamente");
       console.log("📱 Esperando mensajes...\n");
+      recordatorioService.iniciar(sock);
 
       try {
         const stats = await databaseService.getEstadisticas();
@@ -270,70 +271,16 @@ async function connectToWhatsApp() {
     }
   });
 
-  // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
+  // Manejo de mensajes
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
-    
-    // ==================== FILTROS MEJORADOS ====================
-    
-    // Ignorar si no hay mensaje
-    if (!msg.message) {
-      console.log('⏭️  Mensaje sin contenido ignorado');
+    if (!msg.message || msg.key.fromMe || msg.key.remoteJid.includes("@g.us"))
       return;
-    }
-    
-    // Ignorar mensajes propios
-    if (msg.key.fromMe) {
-      return;
-    }
-    
-    // Ignorar mensajes de grupos
-    if (msg.key.remoteJid.includes("@g.us")) {
-      console.log('⏭️  Mensaje de grupo ignorado');
-      return;
-    }
-    
-    // ==================== FILTRO PARA @lid (LISTS) ====================
-    // Ignorar mensajes de listas interactivas de WhatsApp
-    if (msg.key.remoteJid.includes("@lid")) {
-      console.log('⏭️  Mensaje de lista interactiva ignorado:', msg.key.remoteJid);
-      return;
-    }
 
-    // Ignorar mensajes de newsletters/canales
-    if (msg.key.remoteJid.includes("@newsletter")) {
-      console.log('⏭️  Mensaje de canal/newsletter ignorado');
-      return;
-    }
-    
-    // ==================== EXTRAER TELÉFONO ====================
     const telefono = msg.key.remoteJid.replace("@s.whatsapp.net", "");
-    
-    // Validar que sea un número de teléfono válido (solo dígitos)
-    if (!/^\d+$/.test(telefono)) {
-      console.log(`⏭️  Número inválido ignorado: ${msg.key.remoteJid}`);
-      return;
-    }
-
-    // Validar longitud razonable de teléfono (entre 8 y 15 dígitos)
-    if (telefono.length < 8 || telefono.length > 15) {
-      console.log(`⏭️  Longitud de teléfono inválida: ${telefono}`);
-      return;
-    }
-
-    // ==================== EXTRAER TEXTO ====================
     const texto =
-      msg.message.conversation || 
-      msg.message.extendedTextMessage?.text || 
-      msg.message.imageMessage?.caption ||
-      msg.message.videoMessage?.caption ||
-      msg.message.documentMessage?.caption ||
-      "";
-    
-    if (!texto) {
-      console.log('⏭️  Mensaje sin texto ignorado');
-      return;
-    }
+      msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+    if (!texto) return;
 
     logger.info(`📱 Mensaje de ${telefono}: ${texto.substring(0, 50)}...`);
 
@@ -396,7 +343,6 @@ async function main() {
     console.log("🔄 Conectando a WhatsApp...\n");
     await connectToWhatsApp();
 
-    // Health check server para Render
     const PORT = process.env.PORT || 3000;
     http
       .createServer((req, res) => {
@@ -414,9 +360,7 @@ async function main() {
     console.error("\nStack trace:", error.stack);
     process.exit(1);
   }
-}
-
-// Manejo de errores no capturados
+} 
 process.on("unhandledRejection", (error) => {
   logger.error("❌ Unhandled Rejection:", error);
 });
@@ -425,8 +369,7 @@ process.on("uncaughtException", (error) => {
   logger.error("❌ Uncaught Exception:", error);
   process.exit(1);
 });
-
-// Manejo de señales de terminación
+  
 process.on("SIGINT", () => {
   console.log("\n\n👋 Cerrando IngeniaBot...");
   process.exit(0);
@@ -436,6 +379,5 @@ process.on("SIGTERM", () => {
   console.log("\n\n👋 Cerrando IngeniaBot...");
   process.exit(0);
 });
-
-// Iniciar aplicación
-main();
+ 
+main(); 
