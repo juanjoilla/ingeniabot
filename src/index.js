@@ -29,6 +29,7 @@ const {
 } = require("./config/constants");
 const databaseService = require("./services/databaseService");
 const aiService = require("./services/aiService");
+const timeoutService = require("./services/timeoutService");
 
 // Importar handlers
 const { handleCursos } = require("./handlers/cursosHandler");
@@ -93,7 +94,7 @@ async function verificarConfiguracion() {
 }
 
 // ==================== FUNCIÓN PARA ANALIZAR MENSAJES ====================
- function analizarMensaje(msg) {
+function analizarMensaje(msg) {
   const info = {
     remoteJid: msg.key.remoteJid,
     participant: msg.key.participant || null,
@@ -103,7 +104,7 @@ async function verificarConfiguracion() {
   };
 
   // ==================== CASOS ESPECIALES PRIMERO ====================
-  
+
   // Estados/Historias de WhatsApp
   if (info.remoteJid === "status@broadcast") {
     info.tipo = "ESTADO";
@@ -117,29 +118,29 @@ async function verificarConfiguracion() {
   }
 
   // ==================== TIPOS NORMALES ====================
-  
+
   // Grupos
   if (info.remoteJid.includes("@g.us")) {
     info.tipo = "GRUPO";
-  } 
+  }
   // Listas de difusión con participante
   else if (info.remoteJid.includes("@broadcast") && info.participant) {
     info.tipo = "LISTA_DIFUSION";
     info.numeroReal = info.participant?.replace("@s.whatsapp.net", "");
-  } 
+  }
   // Listas interactivas del bot
   else if (info.remoteJid.includes("@lid")) {
     info.tipo = "LISTA_INTERACTIVA";
-  } 
+  }
   // Canales/Newsletters
   else if (info.remoteJid.includes("@newsletter")) {
     info.tipo = "CANAL";
-  } 
+  }
   // Mensaje directo normal
   else if (info.remoteJid.includes("@s.whatsapp.net")) {
     info.tipo = "DIRECTO";
     info.numeroReal = info.remoteJid.replace("@s.whatsapp.net", "");
-  } 
+  }
   // Otros
   else {
     info.tipo = "DESCONOCIDO";
@@ -152,6 +153,34 @@ async function verificarConfiguracion() {
 async function procesarMensaje(mensaje, estudianteId, estudiante) {
   const textoNormalizado = mensaje.toLowerCase().trim();
 
+  if (textoNormalizado === "/timeout") {
+    const info = timeoutService.getInfoTimeout(estudiante.telefono);
+    if (info) {
+      return (
+        `⏰ *Información de Timeout*\n\n` +
+        `Iniciado: ${info.iniciadoEn.toLocaleString("es-PE")}\n` +
+        `Tiempo restante: ${info.tiempoRestanteMin} minutos\n\n` +
+        `_El timeout se reinicia cada vez que me escribes_`
+      );
+    } else {
+      return `⏰ No tienes timeout activo en este momento.`;
+    }
+  }
+
+  if (
+    textoNormalizado === "/stats" &&
+    estudiante.telefono === process.env.ADMIN_PHONE
+  ) {
+    const stats = timeoutService.getEstadisticas();
+    return (
+      `📊 *Estadísticas de Timeout*\n\n` +
+      `⏰ Tiempo de inactividad: ${stats.tiempoInactividadMin} min\n` +
+      `👥 Timeouts activos: ${stats.timeoutsActivos}\n` +
+      `📱 Usuarios: ${stats.usuarios.length}\n\n` +
+      `_Solo visible para admins_`
+    );
+  }
+
   // ==================== COMANDO ESPECIAL: INFO DEL BOT ====================
   if (textoNormalizado === "/info" || textoNormalizado === "/bot") {
     const numeroBot = global.BOT_NUMBER || "Desconocido";
@@ -162,7 +191,9 @@ async function procesarMensaje(mensaje, estudianteId, estudiante) {
       `👤 Nombre: ${global.BOT_NAME || "IngeniaBot"}\n` +
       `⏰ Uptime: ${Math.floor(process.uptime() / 60)} minutos\n` +
       `📊 Node.js: ${process.version}\n` +
-      `💾 Memoria: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB\n` +
+      `💾 Memoria: ${Math.round(
+        process.memoryUsage().heapUsed / 1024 / 1024
+      )} MB\n` +
       `🔄 Intentos reconexión: ${intentosReconexion}/${MAX_INTENTOS_RECONEXION}\n\n` +
       `_Escribe "menú" para volver al inicio_`
     );
@@ -352,7 +383,8 @@ async function connectToWhatsApp() {
         [DisconnectReason.badSession]: "Sesión corrupta - Eliminar auth_info",
         [DisconnectReason.connectionClosed]: "Conexión cerrada por el servidor",
         [DisconnectReason.connectionLost]: "Conexión perdida - Reconectando",
-        [DisconnectReason.connectionReplaced]: "Sesión abierta en otro dispositivo",
+        [DisconnectReason.connectionReplaced]:
+          "Sesión abierta en otro dispositivo",
         [DisconnectReason.loggedOut]: "Sesión cerrada - Escanear QR nuevamente",
         [DisconnectReason.restartRequired]: "Reinicio requerido",
         [DisconnectReason.timedOut]: "Tiempo de espera agotado",
@@ -375,7 +407,10 @@ async function connectToWhatsApp() {
         }
 
         // Tiempo de espera exponencial entre reconexiones
-        const tiempoEspera = Math.min(1000 * Math.pow(2, intentosReconexion), 30000);
+        const tiempoEspera = Math.min(
+          1000 * Math.pow(2, intentosReconexion),
+          30000
+        );
         console.log(
           `\n🔄 Intento de reconexión ${intentosReconexion}/${MAX_INTENTOS_RECONEXION}`
         );
@@ -440,8 +475,12 @@ async function connectToWhatsApp() {
         const stats = await databaseService.getEstadisticas();
         if (stats) {
           console.log("📊 Estadísticas:");
-          console.log(`   - Usuarios activos (7 días): ${stats.usuariosActivos}`);
-          console.log(`   - Total conversaciones: ${stats.totalConversaciones}`);
+          console.log(
+            `   - Usuarios activos (7 días): ${stats.usuariosActivos}`
+          );
+          console.log(
+            `   - Total conversaciones: ${stats.totalConversaciones}`
+          );
           console.log(`   - Uso de IA: ${stats.porcentajeIA}%\n`);
         }
       } catch (error) {
@@ -451,143 +490,158 @@ async function connectToWhatsApp() {
   });
 
   // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
- // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
-sock.ev.on("messages.upsert", async ({ messages }) => {
-  const msg = messages[0];
+  // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0];
 
-  // ==================== FILTRO DE ESTADOS/HISTORIAS ====================
-  // Las historias vienen con key.remoteJid = "status@broadcast"
-  if (msg.key.remoteJid === "status@broadcast") {
-    console.log("⏭️  Historia/Estado ignorado");
-    return;
-  }
-
-  // Análisis del mensaje
-  const analisis = analizarMensaje(msg);
-
-  // Log de debug (solo en desarrollo)
-  if (process.env.NODE_ENV === "development") {
-    console.log("🔍 Análisis:", JSON.stringify(analisis, null, 2));
-  }
-
-  // ==================== FILTROS ====================
-
-  // Ignorar si no hay mensaje
-  if (!msg.message) {
-    console.log("⏭️  Sin contenido");
-    return;
-  }
-
-  // Ignorar mensajes propios
-  if (msg.key.fromMe) {
-    return;
-  }
-
-  // Ignorar grupos
-  if (analisis.tipo === "GRUPO") {
-    console.log("⏭️  Mensaje de grupo ignorado");
-    return;
-  }
-
-  // Ignorar listas interactivas
-  if (analisis.tipo === "LISTA_INTERACTIVA") {
-    console.log("⏭️  Lista interactiva ignorada");
-    return;
-  }
-
-  // Ignorar canales
-  if (analisis.tipo === "CANAL") {
-    console.log("⏭️  Canal ignorado");
-    return;
-  }
-
-  // ==================== FILTRO ADICIONAL: BROADCASTS NO DESEADOS ====================
-  // Ignorar cualquier tipo de broadcast que no sea mensaje directo
-  const remoteJid = msg.key.remoteJid;
-  
-  if (remoteJid.includes("@broadcast") && !msg.key.participant) {
-    console.log("⏭️  Broadcast sin participante ignorado (posible historia)");
-    return;
-  }
-
-  // ==================== EXTRAER TELÉFONO ====================
-  let telefono;
-  let targetJid; // JID al que responderemos
-
-  if (analisis.tipo === "LISTA_DIFUSION") {
-    console.log("📢 Mensaje desde lista de difusión detectado");
-    if (msg.key.participant) {
-      telefono = msg.key.participant.replace("@s.whatsapp.net", "");
-      targetJid = msg.key.participant;
-      console.log(`📱 Número extraído: ${telefono}`);
-    } else {
-      console.log("⏭️  Lista de difusión sin participante");
+    // ==================== FILTRO DE ESTADOS/HISTORIAS ====================
+    // Las historias vienen con key.remoteJid = "status@broadcast"
+    if (msg.key.remoteJid === "status@broadcast") {
+      console.log("⏭️  Historia/Estado ignorado");
       return;
     }
-  } else if (analisis.tipo === "DIRECTO") {
-    telefono = analisis.numeroReal;
-    targetJid = msg.key.remoteJid;
-  } else {
-    console.log(`⏭️  Tipo no soportado: ${analisis.tipo}`);
-    return;
-  }
 
-  // Validar teléfono
-  if (!/^\d+$/.test(telefono) || telefono.length < 8 || telefono.length > 15) {
-    console.log(`⏭️  Número inválido: ${telefono}`);
-    return;
-  }
+    // Análisis del mensaje
+    const analisis = analizarMensaje(msg);
 
-  // ==================== EXTRAER TEXTO ====================
-  const texto =
-    msg.message.conversation ||
-    msg.message.extendedTextMessage?.text ||
-    msg.message.imageMessage?.caption ||
-    msg.message.videoMessage?.caption ||
-    msg.message.documentMessage?.caption ||
-    "";
-
-  if (!texto) {
-    console.log("⏭️  Mensaje sin texto");
-    return;
-  }
-
-  logger.info(`📱 [${analisis.tipo}] Mensaje de ${telefono}: ${texto.substring(0, 50)}...`);
-
-  // ==================== PROCESAR MENSAJE ====================
-  try {
-    let estudiante = await databaseService.getEstudiante(telefono);
-    
-    if (!estudiante) {
-      logger.info(`👤 Nuevo usuario: ${telefono}`);
-      estudiante = await databaseService.createEstudiante(telefono);
-      await sock.sendMessage(targetJid, { text: RESPUESTA_BIENVENIDA });
-      await delay(1000);
+    // Log de debug (solo en desarrollo)
+    if (process.env.NODE_ENV === "development") {
+      console.log("🔍 Análisis:", JSON.stringify(analisis, null, 2));
     }
 
-    const respuesta = await procesarMensaje(texto, estudiante.id, estudiante);
-    await sock.sendMessage(targetJid, { text: respuesta });
-    
-    await databaseService.saveConversacion(
-      estudiante.id,
-      texto,
-      respuesta,
-      respuesta.includes("🤖")
+    // ==================== FILTROS ====================
+
+    // Ignorar si no hay mensaje
+    if (!msg.message) {
+      console.log("⏭️  Sin contenido");
+      return;
+    }
+
+    // Ignorar mensajes propios
+    if (msg.key.fromMe) {
+      return;
+    }
+
+    // Ignorar grupos
+    if (analisis.tipo === "GRUPO") {
+      console.log("⏭️  Mensaje de grupo ignorado");
+      return;
+    }
+
+    // Ignorar listas interactivas
+    if (analisis.tipo === "LISTA_INTERACTIVA") {
+      console.log("⏭️  Lista interactiva ignorada");
+      return;
+    }
+
+    // Ignorar canales
+    if (analisis.tipo === "CANAL") {
+      console.log("⏭️  Canal ignorado");
+      return;
+    }
+
+    // ==================== FILTRO ADICIONAL: BROADCASTS NO DESEADOS ====================
+    // Ignorar cualquier tipo de broadcast que no sea mensaje directo
+    const remoteJid = msg.key.remoteJid;
+
+    if (remoteJid.includes("@broadcast") && !msg.key.participant) {
+      console.log("⏭️  Broadcast sin participante ignorado (posible historia)");
+      return;
+    }
+
+    // ==================== EXTRAER TELÉFONO ====================
+    let telefono;
+    let targetJid; // JID al que responderemos
+
+    if (analisis.tipo === "LISTA_DIFUSION") {
+      console.log("📢 Mensaje desde lista de difusión detectado");
+      if (msg.key.participant) {
+        telefono = msg.key.participant.replace("@s.whatsapp.net", "");
+        targetJid = msg.key.participant;
+        console.log(`📱 Número extraído: ${telefono}`);
+      } else {
+        console.log("⏭️  Lista de difusión sin participante");
+        return;
+      }
+    } else if (analisis.tipo === "DIRECTO") {
+      telefono = analisis.numeroReal;
+      targetJid = msg.key.remoteJid;
+    } else {
+      console.log(`⏭️  Tipo no soportado: ${analisis.tipo}`);
+      return;
+    }
+
+    // Validar teléfono
+    if (
+      !/^\d+$/.test(telefono) ||
+      telefono.length < 8 ||
+      telefono.length > 15
+    ) {
+      console.log(`⏭️  Número inválido: ${telefono}`);
+      return;
+    }
+
+    // ==================== EXTRAER TEXTO ====================
+    const texto =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      msg.message.videoMessage?.caption ||
+      msg.message.documentMessage?.caption ||
+      "";
+
+    if (!texto) {
+      console.log("⏭️  Mensaje sin texto");
+      return;
+    }
+
+    logger.info(
+      `📱 [${analisis.tipo}] Mensaje de ${telefono}: ${texto.substring(
+        0,
+        50
+      )}...`
     );
-    
-    logger.info(`✅ Respuesta enviada a ${telefono}`);
-  } catch (error) {
-    logger.error(`❌ Error procesando mensaje de ${telefono}:`, error.message);
-    
+
+    // ==================== PROCESAR MENSAJE ====================
     try {
-      await sock.sendMessage(targetJid, {
-        text: "😔 Lo siento, ocurrió un error.\n\nIntenta nuevamente en unos momentos.",
-      });
-    } catch (sendError) {
-      logger.error("Error al enviar mensaje de error:", sendError);
+      let estudiante = await databaseService.getEstudiante(telefono);
+
+      if (!estudiante) {
+        logger.info(`👤 Nuevo usuario: ${telefono}`);
+        estudiante = await databaseService.createEstudiante(telefono);
+        await sock.sendMessage(targetJid, { text: RESPUESTA_BIENVENIDA });
+        await delay(1000);
+      }
+
+      timeoutService.cancelarTimeout(telefono);
+
+      const respuesta = await procesarMensaje(texto, estudiante.id, estudiante);
+      await sock.sendMessage(targetJid, { text: respuesta });
+
+      await databaseService.saveConversacion(
+        estudiante.id,
+        texto,
+        respuesta,
+        respuesta.includes("🤖")
+      );
+
+      logger.info(`✅ Respuesta enviada a ${telefono}`);
+      timeoutService.iniciarTimeout(telefono, sock);
+    } catch (error) {
+      logger.error(
+        `❌ Error procesando mensaje de ${telefono}:`,
+        error.message
+      );
+
+      try {
+        await sock.sendMessage(targetJid, {
+          text: "😔 Lo siento, ocurrió un error.\n\nIntenta nuevamente en unos momentos.",
+        });
+      } catch (sendError) {
+        logger.error("Error al enviar mensaje de error:", sendError);
+      }
     }
-  }
-});
+  });
 
   return sock;
 }
@@ -609,39 +663,73 @@ async function main() {
     // Verificar configuración
     await verificarConfiguracion();
 
+    // ==================== CONFIGURAR TIMEOUT ====================
+    // Puedes cambiar el tiempo aquí (en minutos)
+    const MINUTOS_INACTIVIDAD = process.env.TIMEOUT_MINUTOS || 10;
+    timeoutService.setTiempoInactividad(parseInt(MINUTOS_INACTIVIDAD));
+
     // Conectar a WhatsApp
     console.log("🔄 Conectando a WhatsApp...\n");
     await connectToWhatsApp();
 
     // Health check server para Render
     const PORT = process.env.PORT || 3000;
-    http
-      .createServer((req, res) => {
-        if (req.url === "/health" || req.url === "/") {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("IngeniaBot is running");
-        } else if (req.url === "/info") {
-          const info = {
-            numero: global.BOT_NUMBER || "No conectado",
-            nombre: global.BOT_NAME || "N/A",
-            jid: global.BOT_JID || "No conectado",
-            status: global.BOT_NUMBER ? "connected" : "disconnected",
-            uptime: Math.floor(process.uptime() / 60) + " minutos",
-            memoria: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + " MB",
-            intentosReconexion: intentosReconexion,
-          };
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(info, null, 2));
-        } else {
-          res.writeHead(404);
-          res.end("Not found");
-        }
-      })
-      .listen(PORT, () => {
-        console.log(`📡 Servidor HTTP en puerto ${PORT}`);
-        console.log(`🔗 Health: http://localhost:${PORT}/health`);
-        console.log(`🔗 Info: http://localhost:${PORT}/info\n`);
-      });
+    const server = http.createServer((req, res) => {
+  if (req.url === "/health" || req.url === "/") {
+    // Health check más robusto
+    const status = {
+      status: "ok",
+      uptime: Math.floor(process.uptime()),
+      bot_connected: !!global.BOT_NUMBER,
+      bot_number: global.BOT_NUMBER || "disconnected",
+      memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      timestamp: new Date().toISOString()
+    };
+    
+    res.writeHead(200, { 
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache"
+    });
+    res.end(JSON.stringify(status, null, 2));
+  } else if (req.url === "/info") {
+    const info = {
+      numero: global.BOT_NUMBER || "No conectado",
+      nombre: global.BOT_NAME || "N/A",
+      jid: global.BOT_JID || "No conectado",
+      status: global.BOT_NUMBER ? "connected" : "disconnected",
+      uptime: Math.floor(process.uptime() / 60) + " minutos",
+      memoria: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + " MB",
+      intentosReconexion: intentosReconexion,
+      platform: process.platform,
+      nodeVersion: process.version
+    };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(info, null, 2));
+  } else {
+    res.writeHead(404);
+    res.end("Not found");
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`📡 Servidor HTTP en puerto ${PORT}`);
+  console.log(`🔗 Health: http://localhost:${PORT}/health`);
+  console.log(`🔗 Info: http://localhost:${PORT}/info\n`);
+});
+
+// ==================== IMPORTANTE: MANTENER SERVIDOR VIVO ====================
+// Prevenir que Node.js cierre el proceso
+server.on('error', (error) => {
+  console.error('❌ Error en servidor HTTP:', error);
+});
+
+// Keep-alive: responder a Render cada 25 segundos
+setInterval(() => {
+  // Render hace health checks, este interval mantiene el event loop activo
+  if (global.BOT_NUMBER) {
+    console.log(`💓 Bot activo - ${new Date().toLocaleTimeString()}`);
+  }
+}, 25000); // 25 segundos
   } catch (error) {
     console.error("\n❌ Error fatal:", error.message);
     console.error("\nStack:", error.stack);
@@ -662,11 +750,15 @@ process.on("uncaughtException", (error) => {
 
 process.on("SIGINT", () => {
   console.log("\n\n👋 Cerrando IngeniaBot...");
+  timeoutService.limpiarTodos(); // Limpiar timeouts
+
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   console.log("\n\n👋 Cerrando IngeniaBot (SIGTERM)...");
+  timeoutService.limpiarTodos(); // Limpiar timeouts
+
   process.exit(0);
 });
 
