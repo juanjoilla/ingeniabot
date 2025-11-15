@@ -93,8 +93,7 @@ async function verificarConfiguracion() {
 }
 
 // ==================== FUNCIÓN PARA ANALIZAR MENSAJES ====================
-
-function analizarMensaje(msg) {
+ function analizarMensaje(msg) {
   const info = {
     remoteJid: msg.key.remoteJid,
     participant: msg.key.participant || null,
@@ -103,26 +102,51 @@ function analizarMensaje(msg) {
     pushName: msg.pushName || "Sin nombre",
   };
 
-  // Determinar tipo
+  // ==================== CASOS ESPECIALES PRIMERO ====================
+  
+  // Estados/Historias de WhatsApp
+  if (info.remoteJid === "status@broadcast") {
+    info.tipo = "ESTADO";
+    return info;
+  }
+
+  // Broadcasts sin participante (historias, anuncios)
+  if (info.remoteJid.includes("@broadcast") && !info.participant) {
+    info.tipo = "BROADCAST_ANONIMO";
+    return info;
+  }
+
+  // ==================== TIPOS NORMALES ====================
+  
+  // Grupos
   if (info.remoteJid.includes("@g.us")) {
     info.tipo = "GRUPO";
-  } else if (info.remoteJid.includes("@broadcast")) {
+  } 
+  // Listas de difusión con participante
+  else if (info.remoteJid.includes("@broadcast") && info.participant) {
     info.tipo = "LISTA_DIFUSION";
     info.numeroReal = info.participant?.replace("@s.whatsapp.net", "");
-  } else if (info.remoteJid.includes("@lid")) {
+  } 
+  // Listas interactivas del bot
+  else if (info.remoteJid.includes("@lid")) {
     info.tipo = "LISTA_INTERACTIVA";
-  } else if (info.remoteJid.includes("@newsletter")) {
+  } 
+  // Canales/Newsletters
+  else if (info.remoteJid.includes("@newsletter")) {
     info.tipo = "CANAL";
-  } else if (info.remoteJid.includes("@s.whatsapp.net")) {
+  } 
+  // Mensaje directo normal
+  else if (info.remoteJid.includes("@s.whatsapp.net")) {
     info.tipo = "DIRECTO";
     info.numeroReal = info.remoteJid.replace("@s.whatsapp.net", "");
-  } else {
+  } 
+  // Otros
+  else {
     info.tipo = "DESCONOCIDO";
   }
 
   return info;
 }
-
 // ==================== FUNCIÓN PRINCIPAL DEL BOT ====================
 
 async function procesarMensaje(mensaje, estudianteId, estudiante) {
@@ -427,126 +451,143 @@ async function connectToWhatsApp() {
   });
 
   // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages[0];
+ // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
+sock.ev.on("messages.upsert", async ({ messages }) => {
+  const msg = messages[0];
 
-    // Análisis del mensaje
-    const analisis = analizarMensaje(msg);
+  // ==================== FILTRO DE ESTADOS/HISTORIAS ====================
+  // Las historias vienen con key.remoteJid = "status@broadcast"
+  if (msg.key.remoteJid === "status@broadcast") {
+    console.log("⏭️  Historia/Estado ignorado");
+    return;
+  }
 
-    // Log de debug (solo en desarrollo)
-    if (process.env.NODE_ENV === "development") {
-      console.log("🔍 Análisis:", JSON.stringify(analisis, null, 2));
-    }
+  // Análisis del mensaje
+  const analisis = analizarMensaje(msg);
 
-    // ==================== FILTROS ====================
+  // Log de debug (solo en desarrollo)
+  if (process.env.NODE_ENV === "development") {
+    console.log("🔍 Análisis:", JSON.stringify(analisis, null, 2));
+  }
 
-    // Ignorar si no hay mensaje
-    if (!msg.message) {
-      console.log("⏭️  Sin contenido");
-      return;
-    }
+  // ==================== FILTROS ====================
 
-    // Ignorar mensajes propios
-    if (msg.key.fromMe) {
-      return;
-    }
+  // Ignorar si no hay mensaje
+  if (!msg.message) {
+    console.log("⏭️  Sin contenido");
+    return;
+  }
 
-    // Ignorar grupos
-    if (analisis.tipo === "GRUPO") {
-      console.log("⏭️  Mensaje de grupo ignorado");
-      return;
-    }
+  // Ignorar mensajes propios
+  if (msg.key.fromMe) {
+    return;
+  }
 
-    // Ignorar listas interactivas
-    if (analisis.tipo === "LISTA_INTERACTIVA") {
-      console.log("⏭️  Lista interactiva ignorada");
-      return;
-    }
+  // Ignorar grupos
+  if (analisis.tipo === "GRUPO") {
+    console.log("⏭️  Mensaje de grupo ignorado");
+    return;
+  }
 
-    // Ignorar canales
-    if (analisis.tipo === "CANAL") {
-      console.log("⏭️  Canal ignorado");
-      return;
-    }
+  // Ignorar listas interactivas
+  if (analisis.tipo === "LISTA_INTERACTIVA") {
+    console.log("⏭️  Lista interactiva ignorada");
+    return;
+  }
 
-    // ==================== EXTRAER TELÉFONO ====================
-    let telefono;
-    let targetJid; // JID al que responderemos
+  // Ignorar canales
+  if (analisis.tipo === "CANAL") {
+    console.log("⏭️  Canal ignorado");
+    return;
+  }
 
-    if (analisis.tipo === "LISTA_DIFUSION") {
-      console.log("📢 Mensaje desde lista de difusión detectado");
-      if (msg.key.participant) {
-        telefono = msg.key.participant.replace("@s.whatsapp.net", "");
-        targetJid = msg.key.participant;
-        console.log(`📱 Número extraído: ${telefono}`);
-      } else {
-        console.log("⏭️  Lista de difusión sin participante");
-        return;
-      }
-    } else if (analisis.tipo === "DIRECTO") {
-      telefono = analisis.numeroReal;
-      targetJid = msg.key.remoteJid;
+  // ==================== FILTRO ADICIONAL: BROADCASTS NO DESEADOS ====================
+  // Ignorar cualquier tipo de broadcast que no sea mensaje directo
+  const remoteJid = msg.key.remoteJid;
+  
+  if (remoteJid.includes("@broadcast") && !msg.key.participant) {
+    console.log("⏭️  Broadcast sin participante ignorado (posible historia)");
+    return;
+  }
+
+  // ==================== EXTRAER TELÉFONO ====================
+  let telefono;
+  let targetJid; // JID al que responderemos
+
+  if (analisis.tipo === "LISTA_DIFUSION") {
+    console.log("📢 Mensaje desde lista de difusión detectado");
+    if (msg.key.participant) {
+      telefono = msg.key.participant.replace("@s.whatsapp.net", "");
+      targetJid = msg.key.participant;
+      console.log(`📱 Número extraído: ${telefono}`);
     } else {
-      console.log(`⏭️  Tipo no soportado: ${analisis.tipo}`);
+      console.log("⏭️  Lista de difusión sin participante");
       return;
     }
+  } else if (analisis.tipo === "DIRECTO") {
+    telefono = analisis.numeroReal;
+    targetJid = msg.key.remoteJid;
+  } else {
+    console.log(`⏭️  Tipo no soportado: ${analisis.tipo}`);
+    return;
+  }
 
-    // Validar teléfono
-    if (!/^\d+$/.test(telefono) || telefono.length < 8 || telefono.length > 15) {
-      console.log(`⏭️  Número inválido: ${telefono}`);
-      return;
+  // Validar teléfono
+  if (!/^\d+$/.test(telefono) || telefono.length < 8 || telefono.length > 15) {
+    console.log(`⏭️  Número inválido: ${telefono}`);
+    return;
+  }
+
+  // ==================== EXTRAER TEXTO ====================
+  const texto =
+    msg.message.conversation ||
+    msg.message.extendedTextMessage?.text ||
+    msg.message.imageMessage?.caption ||
+    msg.message.videoMessage?.caption ||
+    msg.message.documentMessage?.caption ||
+    "";
+
+  if (!texto) {
+    console.log("⏭️  Mensaje sin texto");
+    return;
+  }
+
+  logger.info(`📱 [${analisis.tipo}] Mensaje de ${telefono}: ${texto.substring(0, 50)}...`);
+
+  // ==================== PROCESAR MENSAJE ====================
+  try {
+    let estudiante = await databaseService.getEstudiante(telefono);
+    
+    if (!estudiante) {
+      logger.info(`👤 Nuevo usuario: ${telefono}`);
+      estudiante = await databaseService.createEstudiante(telefono);
+      await sock.sendMessage(targetJid, { text: RESPUESTA_BIENVENIDA });
+      await delay(1000);
     }
 
-    // ==================== EXTRAER TEXTO ====================
-    const texto =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.imageMessage?.caption ||
-      msg.message.videoMessage?.caption ||
-      msg.message.documentMessage?.caption ||
-      "";
-
-    if (!texto) {
-      console.log("⏭️  Mensaje sin texto");
-      return;
-    }
-
-    logger.info(`📱 [${analisis.tipo}] Mensaje de ${telefono}: ${texto.substring(0, 50)}...`);
-
-    // ==================== PROCESAR MENSAJE ====================
+    const respuesta = await procesarMensaje(texto, estudiante.id, estudiante);
+    await sock.sendMessage(targetJid, { text: respuesta });
+    
+    await databaseService.saveConversacion(
+      estudiante.id,
+      texto,
+      respuesta,
+      respuesta.includes("🤖")
+    );
+    
+    logger.info(`✅ Respuesta enviada a ${telefono}`);
+  } catch (error) {
+    logger.error(`❌ Error procesando mensaje de ${telefono}:`, error.message);
+    
     try {
-      let estudiante = await databaseService.getEstudiante(telefono);
-      
-      if (!estudiante) {
-        logger.info(`👤 Nuevo usuario: ${telefono}`);
-        estudiante = await databaseService.createEstudiante(telefono);
-        await sock.sendMessage(targetJid, { text: RESPUESTA_BIENVENIDA });
-        await delay(1000);
-      }
-
-      const respuesta = await procesarMensaje(texto, estudiante.id, estudiante);
-      await sock.sendMessage(targetJid, { text: respuesta });
-      
-      await databaseService.saveConversacion(
-        estudiante.id,
-        texto,
-        respuesta,
-        respuesta.includes("🤖")
-      );
-      
-      logger.info(`✅ Respuesta enviada a ${telefono}`);
-    } catch (error) {
-      logger.error(`❌ Error procesando mensaje de ${telefono}:`, error.message);
-      
-      try {
-        await sock.sendMessage(targetJid, {
-          text: "😔 Lo siento, ocurrió un error.\n\nIntenta nuevamente en unos momentos.",
-        });
-      } catch (sendError) {
-        logger.error("Error al enviar mensaje de error:", sendError);
-      }
+      await sock.sendMessage(targetJid, {
+        text: "😔 Lo siento, ocurrió un error.\n\nIntenta nuevamente en unos momentos.",
+      });
+    } catch (sendError) {
+      logger.error("Error al enviar mensaje de error:", sendError);
     }
-  });
+  }
+});
 
   return sock;
 }
