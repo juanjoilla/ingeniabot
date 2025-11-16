@@ -93,7 +93,7 @@ async function verificarConfiguracion() {
   console.log("✅ Configuración verificada correctamente\n");
 }
 
-// ==================== FUNCIÓN PARA ANALIZAR MENSAJES ====================
+// ==================== FUNCIÓN PARA ANALIZAR MENSAJES (Mantenida para compatibilidad o futuros usos, pero no crítica para el JID) ====================
 function analizarMensaje(msg) {
   const info = {
     remoteJid: msg.key.remoteJid,
@@ -128,9 +128,11 @@ function analizarMensaje(msg) {
     info.tipo = "LISTA_DIFUSION";
     info.numeroReal = info.participant?.replace("@s.whatsapp.net", "");
   }
-  // Listas interactivas del bot
+  // Listas interactivas del bot (esto es un tipo de mensaje estructurado, no un JID de conversación)
+  // Sin embargo, WhatsApp puede usar @lid para chats 1:1 de no contactos. Lo trataremos como DIRECTO.
   else if (info.remoteJid.includes("@lid")) {
-    info.tipo = "LISTA_INTERACTIVA";
+    info.tipo = "DIRECTO_LID_FALLBACK"; // Nuevo tipo para indicar este caso
+    info.numeroReal = info.remoteJid.replace("@lid", "");
   }
   // Canales/Newsletters
   else if (info.remoteJid.includes("@newsletter")) {
@@ -148,6 +150,7 @@ function analizarMensaje(msg) {
 
   return info;
 }
+
 // ==================== FUNCIÓN PRINCIPAL DEL BOT ====================
 
 async function procesarMensaje(mensaje, estudianteId, estudiante) {
@@ -489,29 +492,15 @@ async function connectToWhatsApp() {
     }
   });
 
-  // ==================== MANEJO DE MENSAJES (MEJORADO) ===================
-  // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
+  // ==================== MANEJO DE MENSAJES (CORREGIDO PARA NO CONTACTOS) ====================
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
 
     // ==================== FILTRO DE ESTADOS/HISTORIAS ====================
-    // Las historias vienen con key.remoteJid = "status@broadcast"
     if (msg.key.remoteJid === "status@broadcast") {
       logger.info("⏭️  Historia/Estado ignorado");
       return;
     }
-
-    // Análisis del mensaje
-    // No necesitamos un análisis tan granular para la identificación básica
-    // del remitente en 1:1. El remoteJid es suficiente.
-    const analisis = analizarMensaje(msg); // Mantener para el log o si lo usas en otros handlers
-
-    // Log de debug (solo en desarrollo)
-    if (process.env.NODE_ENV === "development") {
-      logger.debug("🔍 Análisis:", JSON.stringify(analisis, null, 2));
-    }
-
-    // ==================== FILTROS DE MENSAJES NO DESEADOS ====================
 
     // Ignorar si no hay contenido en el mensaje (ej. solo notificaciones de estado)
     if (!msg.message) {
@@ -524,48 +513,42 @@ async function connectToWhatsApp() {
       return;
     }
 
-    // Ignorar mensajes de grupos, listas interactivas o canales por defecto
-    // Si quieres que el bot responda en grupos, tendrías que ajustar esta lógica.
-    // Para chats 1:1 con personas no agregadas, el remoteJid es el JID del remitente.
     const remoteJid = msg.key.remoteJid;
 
+    // ==================== FILTROS DE MENSAJES NO DESEADOS (MÁS ESPECÍFICOS) ====================
+
+    // Ignorar grupos
     if (remoteJid.endsWith("@g.us")) {
       logger.info(`⏭️  Mensaje de grupo ignorado: ${remoteJid}`);
       return;
     }
-    if (remoteJid.endsWith("@lid")) {
-      logger.info(`⏭️  Mensaje de lista interactiva ignorado: ${remoteJid}`);
-      return;
-    }
+
+    // Ignorar canales/newsletters
     if (remoteJid.endsWith("@newsletter")) {
       logger.info(`⏭️  Mensaje de canal ignorado: ${remoteJid}`);
       return;
     }
-    // Este filtro adicional para broadcasts es redundante si ya ignoramos grupos, canales, etc.
-    // Si remoteJid incluye "@broadcast" y no tiene participant, ya fue filtrado por "status@broadcast" o no es un tipo que queremos procesar.
-    // Lo eliminamos para simplificar y no bloquear mensajes 1:1 que podrían venir con alguna inconsistencia de 'participant'.
-    // if (remoteJid.includes("@broadcast") && !msg.key.participant) {
-    //   logger.info("⏭️  Broadcast sin participante ignorado (posible historia/notificación)");
-    //   return;
-    // }
 
+    // NOTA CLAVE: Eliminamos el filtro explícito para "@lid" aquí.
+    // WhatsApp puede enviar mensajes de no-contactos como "@lid", y queremos procesarlos.
 
     // ==================== EXTRAER TELÉFONO Y TARGET JID ====================
-    // Para cualquier mensaje 1:1 (sea contacto o no), el remoteJid es el JID del remitente.
-    // El JID de un usuario siempre termina en "@s.whatsapp.net".
-    let targetJid = remoteJid;
-    let telefono = remoteJid.split("@")[0]; // Extrae solo el número
+    let targetJid;
+    let telefono;
 
-    // Si es un mensaje de una lista de difusión donde queremos responder al remitente
-    // La clave es que msg.key.participant contiene el JID del remitente real dentro de la difusión.
+    // Si es un mensaje de una lista de difusión donde queremos responder al participante real
+    // msg.key.participant estará presente y remoteJid incluirá "@broadcast"
     if (msg.key.participant && remoteJid.includes("@broadcast")) {
         targetJid = msg.key.participant;
         telefono = msg.key.participant.split("@")[0];
         logger.info(`📢 Mensaje de lista de difusión, respondiendo a participante: ${telefono}`);
     } else {
-        logger.info(`💬 Mensaje directo (o desde difusión, respondiendo al chat principal): ${telefono}`);
+        // Para cualquier otro tipo de mensaje que no sea grupo, canal o broadcast especial,
+        // asumimos que es un chat 1:1 (directo normal o el caso de @lid para no contactos).
+        targetJid = remoteJid;
+        telefono = remoteJid.split("@")[0];
+        logger.info(`💬 Mensaje 1:1 (directo o aparente @lid) de: ${telefono}`);
     }
-
 
     // Validar teléfono (asegurarse de que sea un número)
     if (!/^\d+$/.test(telefono) || telefono.length < 8 || telefono.length > 15) {
@@ -587,11 +570,10 @@ async function connectToWhatsApp() {
       return;
     }
 
+    // Usamos el resultado de analizarMensaje para logs si lo queremos, pero la lógica de JID es manual.
+    const analisis = analizarMensaje(msg);
     logger.info(
-      `📱 [${analisis.tipo || 'DIRECTO_FALLBACK'}] Mensaje de ${telefono}: ${texto.substring(
-        0,
-        50
-      )}...`
+      `📱 [${analisis.tipo || 'CHAT_1_A_1'}] Mensaje de ${telefono}: ${texto.substring(0, 50)}...`
     );
 
     // ==================== PROCESAR MENSAJE ====================
@@ -678,8 +660,8 @@ async function main() {
       memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       timestamp: new Date().toISOString()
     };
-    
-    res.writeHead(200, { 
+
+    res.writeHead(200, {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache"
     });
@@ -720,7 +702,7 @@ server.on('error', (error) => {
 setInterval(() => {
   // Render hace health checks, este interval mantiene el event loop activo
   if (global.BOT_NUMBER) {
-    console.log(`💓 Bot activo - ${new Date().toLocaleTimeString()}`);
+    logger.debug(`💓 Bot activo - ${new Date().toLocaleTimeString()}`); // Cambiado a debug para no saturar logs
   }
 }, 25000); // 25 segundos
   } catch (error) {
