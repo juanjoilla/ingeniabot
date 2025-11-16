@@ -489,7 +489,7 @@ async function connectToWhatsApp() {
     }
   });
 
-  // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
+  // ==================== MANEJO DE MENSAJES (MEJORADO) ===================
   // ==================== MANEJO DE MENSAJES (MEJORADO) ====================
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
@@ -497,91 +497,83 @@ async function connectToWhatsApp() {
     // ==================== FILTRO DE ESTADOS/HISTORIAS ====================
     // Las historias vienen con key.remoteJid = "status@broadcast"
     if (msg.key.remoteJid === "status@broadcast") {
-      console.log("⏭️  Historia/Estado ignorado");
+      logger.info("⏭️  Historia/Estado ignorado");
       return;
     }
 
     // Análisis del mensaje
-    const analisis = analizarMensaje(msg);
+    // No necesitamos un análisis tan granular para la identificación básica
+    // del remitente en 1:1. El remoteJid es suficiente.
+    const analisis = analizarMensaje(msg); // Mantener para el log o si lo usas en otros handlers
 
     // Log de debug (solo en desarrollo)
     if (process.env.NODE_ENV === "development") {
-      console.log("🔍 Análisis:", JSON.stringify(analisis, null, 2));
+      logger.debug("🔍 Análisis:", JSON.stringify(analisis, null, 2));
     }
 
-    // ==================== FILTROS ====================
+    // ==================== FILTROS DE MENSAJES NO DESEADOS ====================
 
-    // Ignorar si no hay mensaje
+    // Ignorar si no hay contenido en el mensaje (ej. solo notificaciones de estado)
     if (!msg.message) {
-      console.log("⏭️  Sin contenido");
+      logger.info("⏭️  Mensaje sin contenido (posible notificación)");
       return;
     }
 
-    // Ignorar mensajes propios
+    // Ignorar mensajes enviados por el propio bot
     if (msg.key.fromMe) {
       return;
     }
 
-    // Ignorar grupos
-    if (analisis.tipo === "GRUPO") {
-      console.log("⏭️  Mensaje de grupo ignorado");
-      return;
-    }
-
-    // Ignorar listas interactivas
-    if (analisis.tipo === "LISTA_INTERACTIVA") {
-      console.log("⏭️  Lista interactiva ignorada");
-      return;
-    }
-
-    // Ignorar canales
-    if (analisis.tipo === "CANAL") {
-      console.log("⏭️  Canal ignorado");
-      return;
-    }
-
-    // ==================== FILTRO ADICIONAL: BROADCASTS NO DESEADOS ====================
-    // Ignorar cualquier tipo de broadcast que no sea mensaje directo
+    // Ignorar mensajes de grupos, listas interactivas o canales por defecto
+    // Si quieres que el bot responda en grupos, tendrías que ajustar esta lógica.
+    // Para chats 1:1 con personas no agregadas, el remoteJid es el JID del remitente.
     const remoteJid = msg.key.remoteJid;
 
-    if (remoteJid.includes("@broadcast") && !msg.key.participant) {
-      console.log("⏭️  Broadcast sin participante ignorado (posible historia)");
+    if (remoteJid.endsWith("@g.us")) {
+      logger.info(`⏭️  Mensaje de grupo ignorado: ${remoteJid}`);
       return;
     }
+    if (remoteJid.endsWith("@lid")) {
+      logger.info(`⏭️  Mensaje de lista interactiva ignorado: ${remoteJid}`);
+      return;
+    }
+    if (remoteJid.endsWith("@newsletter")) {
+      logger.info(`⏭️  Mensaje de canal ignorado: ${remoteJid}`);
+      return;
+    }
+    // Este filtro adicional para broadcasts es redundante si ya ignoramos grupos, canales, etc.
+    // Si remoteJid incluye "@broadcast" y no tiene participant, ya fue filtrado por "status@broadcast" o no es un tipo que queremos procesar.
+    // Lo eliminamos para simplificar y no bloquear mensajes 1:1 que podrían venir con alguna inconsistencia de 'participant'.
+    // if (remoteJid.includes("@broadcast") && !msg.key.participant) {
+    //   logger.info("⏭️  Broadcast sin participante ignorado (posible historia/notificación)");
+    //   return;
+    // }
 
-    // ==================== EXTRAER TELÉFONO ====================
-    let telefono;
-    let targetJid; // JID al que responderemos
 
-    if (analisis.tipo === "LISTA_DIFUSION") {
-      console.log("📢 Mensaje desde lista de difusión detectado");
-      if (msg.key.participant) {
-        telefono = msg.key.participant.replace("@s.whatsapp.net", "");
+    // ==================== EXTRAER TELÉFONO Y TARGET JID ====================
+    // Para cualquier mensaje 1:1 (sea contacto o no), el remoteJid es el JID del remitente.
+    // El JID de un usuario siempre termina en "@s.whatsapp.net".
+    let targetJid = remoteJid;
+    let telefono = remoteJid.split("@")[0]; // Extrae solo el número
+
+    // Si es un mensaje de una lista de difusión donde queremos responder al remitente
+    // La clave es que msg.key.participant contiene el JID del remitente real dentro de la difusión.
+    if (msg.key.participant && remoteJid.includes("@broadcast")) {
         targetJid = msg.key.participant;
-        console.log(`📱 Número extraído: ${telefono}`);
-      } else {
-        console.log("⏭️  Lista de difusión sin participante");
-        return;
-      }
-    } else if (analisis.tipo === "DIRECTO") {
-      telefono = analisis.numeroReal;
-      targetJid = msg.key.remoteJid;
+        telefono = msg.key.participant.split("@")[0];
+        logger.info(`📢 Mensaje de lista de difusión, respondiendo a participante: ${telefono}`);
     } else {
-      console.log(`⏭️  Tipo no soportado: ${analisis.tipo}`);
+        logger.info(`💬 Mensaje directo (o desde difusión, respondiendo al chat principal): ${telefono}`);
+    }
+
+
+    // Validar teléfono (asegurarse de que sea un número)
+    if (!/^\d+$/.test(telefono) || telefono.length < 8 || telefono.length > 15) {
+      logger.warn(`⏭️  Número de teléfono inválido o formato inesperado: ${telefono}. Ignorando mensaje.`);
       return;
     }
 
-    // Validar teléfono
-    if (
-      !/^\d+$/.test(telefono) ||
-      telefono.length < 8 ||
-      telefono.length > 15
-    ) {
-      console.log(`⏭️  Número inválido: ${telefono}`);
-      return;
-    }
-
-    // ==================== EXTRAER TEXTO ====================
+    // ==================== EXTRAER TEXTO DEL MENSAJE ====================
     const texto =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
@@ -591,12 +583,12 @@ async function connectToWhatsApp() {
       "";
 
     if (!texto) {
-      console.log("⏭️  Mensaje sin texto");
+      logger.info(`⏭️  Mensaje de ${telefono} sin texto, tipo: ${Object.keys(msg.message || {})[0] || 'Desconocido'}`);
       return;
     }
 
     logger.info(
-      `📱 [${analisis.tipo}] Mensaje de ${telefono}: ${texto.substring(
+      `📱 [${analisis.tipo || 'DIRECTO_FALLBACK'}] Mensaje de ${telefono}: ${texto.substring(
         0,
         50
       )}...`
@@ -607,10 +599,10 @@ async function connectToWhatsApp() {
       let estudiante = await databaseService.getEstudiante(telefono);
 
       if (!estudiante) {
-        logger.info(`👤 Nuevo usuario: ${telefono}`);
+        logger.info(`👤 Nuevo usuario detectado: ${telefono}`);
         estudiante = await databaseService.createEstudiante(telefono);
         await sock.sendMessage(targetJid, { text: RESPUESTA_BIENVENIDA });
-        await delay(1000);
+        await delay(1000); // Pequeña pausa para simular una conversación más natural
       }
 
       timeoutService.cancelarTimeout(telefono);
@@ -622,7 +614,7 @@ async function connectToWhatsApp() {
         estudiante.id,
         texto,
         respuesta,
-        respuesta.includes("🤖")
+        respuesta.includes("🤖") // Asume que si incluye '🤖' es respuesta de IA
       );
 
       logger.info(`✅ Respuesta enviada a ${telefono}`);
@@ -632,10 +624,11 @@ async function connectToWhatsApp() {
         `❌ Error procesando mensaje de ${telefono}:`,
         error.message
       );
+      logger.error(`Stack:`, error.stack); // Agrega el stack para más detalle
 
       try {
         await sock.sendMessage(targetJid, {
-          text: "😔 Lo siento, ocurrió un error.\n\nIntenta nuevamente en unos momentos.",
+          text: "😔 Lo siento, ocurrió un error interno.\n\nPor favor, intenta nuevamente más tarde o contacta con soporte.",
         });
       } catch (sendError) {
         logger.error("Error al enviar mensaje de error:", sendError);
