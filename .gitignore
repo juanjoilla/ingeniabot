@@ -7,7 +7,7 @@ yarn.lock
 .env
 .env.local
 .env.*.local
-
+.instance.lock     
 # Sesión de WhatsApp (se regenera automáticamente)
 # IMPORTANTE: En Railway/Render NO ignorar (usar volumen)
 auth_info/

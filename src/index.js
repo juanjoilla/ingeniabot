@@ -3,7 +3,7 @@ require("dotenv").config();
 const qrcode = require("qrcode-terminal");
 const http = require("http");
 const fs = require("fs");
-const path = require("path");
+const path = require("path"); 
 
 // Debug: Verificar variables de entorno
 console.log("🔍 DATABASE_URL existe:", !!process.env.DATABASE_URL);
@@ -39,7 +39,7 @@ const {
   handleSoporte,
   handleAdmision,
 } = require("./handlers/menuHandler");
-const agendaHandler = require("./handlers/agendaHandler");
+const agendaHandler = require("./handlers/agendaHandler"); 
 
 // Logger configuración
 const logger = pino({
@@ -398,6 +398,50 @@ async function connectToWhatsApp() {
         motivoDesconexion[statusCode] || "Motivo desconocido"
       );
 
+
+  // ==================== CASO ESPECIAL: ERROR 401 (CONFLICT) ====================
+  if (statusCode === 401) {
+    console.error("\n⚠️  ERROR 401: CONFLICTO DE SESIÓN");
+    console.error("╔════════════════════════════════════════╗");
+    console.error("║  Hay otra instancia del bot activa    ║");
+    console.error("╚════════════════════════════════════════╝");
+    console.error("\n💡 SOLUCIONES:");
+    console.error("   1. Cierra WhatsApp Web en otros dispositivos");
+    console.error("   2. Detén el bot en tu computadora local");
+    console.error("   3. Verifica que no hay 2 deploys en Render");
+    console.error("   4. Espera 2 minutos y el bot se reconectará\n");
+    
+    // NO eliminar auth_info inmediatamente
+    // Esperar y reintentar
+    intentosReconexion++;
+    
+    if (intentosReconexion > 3) {
+      console.error("❌ Demasiados conflictos de sesión");
+      console.error("   Eliminando auth_info y requiriendo nuevo QR...\n");
+      
+      try {
+        const authPath = path.join(__dirname, "../auth_info");
+        if (fs.existsSync(authPath)) {
+          fs.rmSync(authPath, { recursive: true, force: true });
+          console.log("🗑️  Carpeta auth_info eliminada");
+        }
+      } catch (error) {
+        console.error("Error al eliminar auth_info:", error);
+      }
+      
+      // Resetear y reconectar
+      intentosReconexion = 0;
+      setTimeout(() => connectToWhatsApp(), 5000);
+      return;
+    }
+    
+    // Esperar más tiempo antes de reconectar en caso de conflicto
+    const tiempoEspera = 60000; // 1 minuto
+    console.log(`⏰ Esperando ${tiempoEspera / 1000} segundos antes de reconectar...\n`);
+    setTimeout(() => connectToWhatsApp(), tiempoEspera);
+    return;
+  }
+
       if (shouldReconnect) {
         intentosReconexion++;
 
@@ -635,6 +679,17 @@ async function main() {
   console.log();
 
   try {
+    const lockAdquirido = await instancelock.acquire();
+    if (!lockAdquirido) {
+          console.error('\n❌ ERROR CRÍTICO: Ya hay otra instancia corriendo');
+          console.error('   Solo puede haber 1 bot activo a la vez');
+          console.error('\n💡 Soluciones:');
+          console.error('   1. Cierra la otra instancia');
+          console.error('   2. Espera 5 minutos y reintenta');
+          console.error('   3. Elimina manualmente el archivo .instance.lock\n');
+          process.exit(1);
+        }
+
     // Verificar configuración
     await verificarConfiguracion();
 
@@ -680,7 +735,28 @@ async function main() {
     };
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(info, null, 2));
-  } else {
+  }// En el servidor HTTP, agregar:
+else if (req.url === "/instances") {
+  const lockExists = fs.existsSync(path.join(__dirname, '../.instance.lock'));
+  let lockData = null;
+  
+  if (lockExists) {
+    try {
+      lockData = JSON.parse(fs.readFileSync(path.join(__dirname, '../.instance.lock'), 'utf8'));
+    } catch (e) {}
+  }
+  
+  const info = {
+    currentPID: process.pid,
+    lockExists,
+    lockData,
+    botConnected: !!global.BOT_NUMBER,
+    uptime: process.uptime()
+  };
+  
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(info, null, 2));
+} else {
     res.writeHead(404);
     res.end("Not found");
   }
@@ -708,11 +784,14 @@ setInterval(() => {
   } catch (error) {
     console.error("\n❌ Error fatal:", error.message);
     console.error("\nStack:", error.stack);
+    instanceLock.release(); // Liberar lock en caso de error
+
     process.exit(1);
   }
 }
 
 // ==================== MANEJO DE ERRORES ====================
+let isShuttingDown = false;
 
 process.on("unhandledRejection", (error) => {
   logger.error("❌ Unhandled Rejection:", error);
@@ -723,19 +802,50 @@ process.on("uncaughtException", (error) => {
   // No cerrar el proceso, intentar continuar
 });
 
-process.on("SIGINT", () => {
-  console.log("\n\n👋 Cerrando IngeniaBot...");
-  timeoutService.limpiarTodos(); // Limpiar timeouts
-
-  process.exit(0);
+process.on("SIGINT", async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log("\n\n👋 Señal SIGINT recibida - Cerrando IngeniaBot...");
+  
+  try {
+    timeoutService.limpiarTodos();
+    instanceLock.release();
+    console.log("✅ IngeniaBot cerrado");
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Error durante cierre:", error);
+    instanceLock.release();
+    process.exit(1);
+  }
 });
 
-process.on("SIGTERM", () => {
-  console.log("\n\n👋 Cerrando IngeniaBot (SIGTERM)...");
-  timeoutService.limpiarTodos(); // Limpiar timeouts
-
-  process.exit(0);
+process.on("SIGTERM", async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log("\n\n⚠️  Señal SIGTERM recibida - Iniciando apagado graceful...");
+  
+  try {
+    console.log("🧹 Limpiando timeouts...");
+    timeoutService.limpiarTodos();
+    
+    console.log("🔓 Liberando instance lock...");
+    instanceLock.release();
+    
+    console.log("✅ Apagado completado");
+    
+    setTimeout(() => {
+      process.exit(0);
+    }, 2000);
+    
+  } catch (error) {
+    console.error("❌ Error durante apagado:", error);
+    instanceLock.release();
+    process.exit(1);
+  }
 });
+
 
 // ==================== INICIAR ====================
 main();
