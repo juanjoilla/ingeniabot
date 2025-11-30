@@ -8,15 +8,12 @@ class InstanceLock {
     this.lockAcquired = false;
   }
 
-  // Intentar adquirir el lock
   async acquire() {
     try {
-      // Verificar si ya existe un lock
       if (fs.existsSync(this.lockFile)) {
         const lockData = JSON.parse(fs.readFileSync(this.lockFile, 'utf8'));
         const lockAge = Date.now() - lockData.timestamp;
         
-        // Si el lock tiene más de 5 minutos, asumimos que es viejo y lo eliminamos
         if (lockAge > 5 * 60 * 1000) {
           console.log('🔓 Lock antiguo encontrado, eliminando...');
           fs.unlinkSync(this.lockFile);
@@ -28,7 +25,6 @@ class InstanceLock {
         }
       }
 
-      // Crear lock
       const lockData = {
         pid: process.pid,
         timestamp: Date.now(),
@@ -49,7 +45,6 @@ class InstanceLock {
     }
   }
 
-  // Liberar el lock
   release() {
     if (this.lockAcquired && fs.existsSync(this.lockFile)) {
       try {
