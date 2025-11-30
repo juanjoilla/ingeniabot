@@ -39,7 +39,10 @@ const {
   handleSoporte,
   handleAdmision,
 } = require("./handlers/menuHandler");
-const agendaHandler = require("./handlers/agendaHandler"); 
+const agendaHandler = require("./handlers/agendaHandler");
+
+// Importar utilidades  
+const instancelock = require("./utils/InstanceLock"); 
 
 // Logger configuración
 const logger = pino({
@@ -810,12 +813,12 @@ process.on("SIGINT", async () => {
   
   try {
     timeoutService.limpiarTodos();
-    instanceLock.release();
+    instancelock.release();
     console.log("✅ IngeniaBot cerrado");
     process.exit(0);
   } catch (error) {
     console.error("❌ Error durante cierre:", error);
-    instanceLock.release();
+    instancelock.release();
     process.exit(1);
   }
 });
@@ -831,7 +834,7 @@ process.on("SIGTERM", async () => {
     timeoutService.limpiarTodos();
     
     console.log("🔓 Liberando instance lock...");
-    instanceLock.release();
+    instancelock.release();
     
     console.log("✅ Apagado completado");
     
@@ -841,7 +844,7 @@ process.on("SIGTERM", async () => {
     
   } catch (error) {
     console.error("❌ Error durante apagado:", error);
-    instanceLock.release();
+    instancelock.release();
     process.exit(1);
   }
 });
